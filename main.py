@@ -1,10 +1,11 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import json
 import os
 import win32print
 from datetime import datetime
 import re
+import csv
 
 ALUNOS_FILE = "alunos.json"
 ATRASOS_FILE = "atrasos.json"
@@ -174,7 +175,7 @@ def imprimir_termica(registro):
     conteudo += b"\n================================\n"
 
     linhas = [
-        f"Data: {registro['data']}  Hora: {registro['hora_registro']}",
+        f"Data: {registro['data']}  ",
         "--------------------------------",
         f"Aluno   : {registro['nome']}",
         f"Matricula: {registro['matricula']}",
@@ -213,19 +214,17 @@ def ver_registros():
     janela = tk.Toplevel(root)
     janela.title("Registros de Atrasos")
     janela.geometry("1350x720")
+    janela.resizable(True, True)
+    janela.minsize(800, 600)
 
-    # ==============================
-    # TÍTULO
-    # ==============================
+    apply_theme_to_window(janela)
+
     tk.Label(
         janela,
         text="REGISTROS DE ATRASOS",
         font=("Segoe UI", 18, "bold")
     ).pack(pady=10)
 
-    # ==============================
-    # LEGENDA EXPLICATIVA
-    # ==============================
     legenda_texto = (
         "DATA | "
         "MATRÍCULA | "
@@ -243,12 +242,9 @@ def ver_registros():
         font=("Segoe UI", 10),
         wraplength=1300,
         justify="left",
-        fg="#333"
+        foreground="#333"
     ).pack(padx=20, pady=5)
 
-    # ==============================
-    # CAMPO DE BUSCA
-    # ==============================
     frame_busca = tk.Frame(janela)
     frame_busca.pack(pady=10)
 
@@ -258,28 +254,28 @@ def ver_registros():
     entry_busca = tk.Entry(frame_busca, font=("Segoe UI", 11), width=35)
     entry_busca.pack(side="left", padx=5)
 
-    lista = tk.Listbox(janela, font=("Courier New", 10))
+    lista = tk.Listbox(janela, font=("Courier New", 10), selectmode=tk.SINGLE, exportselection=False)
     lista.pack(fill="both", expand=True, padx=20, pady=10)
 
-    # ==============================
-    # ORDENAR POR ALUNO (AGRUPAR)
-    # ==============================
+    lista_indices = []
+
     def ordenar_por_aluno(lista_registros):
-        return sorted(lista_registros, key=lambda x: (
-            x.get("matricula",""),
-            x.get("data",""),
-            x.get("hora_registro","")
-        ))
+        return sorted(
+            enumerate(lista_registros),
+            key=lambda x: (
+                x[1].get("matricula", ""),
+                x[1].get("data", ""),
+                x[1].get("hora_registro", "")
+            )
+        )
 
     registros_ordenados = ordenar_por_aluno(atrasos)
 
-    # ==============================
-    # ATUALIZAR LISTA
-    # ==============================
     def atualizar_lista(registros):
         lista.delete(0, tk.END)
+        lista_indices.clear()
 
-        for i, a in enumerate(registros):
+        for original_index, a in registros:
             linha = (
                 f"{a.get('data','')} | "
                 f"{a.get('matricula','')} | "
@@ -291,12 +287,8 @@ def ver_registros():
                 f"{a.get('motivo','')}"
             )
             lista.insert(tk.END, linha)
+            lista_indices.append(original_index)
 
-    atualizar_lista(registros_ordenados)
-
-    # ==============================
-    # PROCURAR
-    # ==============================
     def procurar():
         texto = entry_busca.get().strip().lower()
 
@@ -304,36 +296,116 @@ def ver_registros():
             atualizar_lista(registros_ordenados)
             return
 
-        filtrados = []
-
-        for a in registros_ordenados:
-            if (
-                texto in a.get("matricula","").lower() or
-                texto in a.get("nome","").lower()
-            ):
-                filtrados.append(a)
+        filtrados = [
+            item for item in registros_ordenados
+            if texto in item[1].get("matricula", "").lower()
+            or texto in item[1].get("nome", "").lower()
+        ]
 
         atualizar_lista(filtrados)
+
+    def exportar_atrasos():
+        if not atrasos:
+            messagebox.showinfo("Aviso", "Nenhum registro para exportar.")
+            return
+
+        arquivo = filedialog.asksaveasfilename(
+            title="Exportar registros",
+            defaultextension=".csv",
+            filetypes=[
+                ("CSV", "*.csv"),
+                ("Excel XLSX", "*.xlsx"),
+                ("Todos", "*.*")
+            ],
+            initialfile="atrasos.csv"
+        )
+        if not arquivo:
+            return
+
+        ext = os.path.splitext(arquivo)[1].lower()
+
+        if ext == ".xlsx":
+            try:
+                from openpyxl import Workbook
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Atrasos"
+                ws.append([
+                    "Data", "Hora registro", "Matrícula", "Nome",
+                    "Docente", "Turma", "Início", "Chegada", "Motivo"
+                ])
+                for a in atrasos:
+                    ws.append([
+                        a.get("data", ""),
+                        a.get("hora_registro", ""),
+                        a.get("matricula", ""),
+                        a.get("nome", ""),
+                        a.get("docente", ""),
+                        a.get("turma", ""),
+                        a.get("inicio", ""),
+                        a.get("chegada", ""),
+                        a.get("motivo", "")
+                    ])
+                wb.save(arquivo)
+                messagebox.showinfo("Exportar", f"Arquivo salvo em:\n{arquivo}")
+                return
+            except ImportError:
+                arquivo = os.path.splitext(arquivo)[0] + ".csv"
+                ext = ".csv"
+                messagebox.showwarning(
+                    "Exportar",
+                    "openpyxl não está instalado. O arquivo será salvo como CSV."
+                )
+
+        if ext != ".csv":
+            arquivo += ".csv"
+
+        with open(arquivo, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f, delimiter=";", quoting=csv.QUOTE_MINIMAL)
+            writer.writerow([
+                "Data", "Hora registro", "Matrícula", "Nome",
+                "Docente", "Turma", "Início", "Chegada", "Motivo"
+            ])
+            for a in atrasos:
+                writer.writerow([
+                    a.get("data", ""),
+                    a.get("hora_registro", ""),
+                    a.get("matricula", ""),
+                    a.get("nome", ""),
+                    a.get("docente", ""),
+                    a.get("turma", ""),
+                    a.get("inicio", ""),
+                    a.get("chegada", ""),
+                    a.get("motivo", "")
+                ])
+
+        messagebox.showinfo("Exportar", f"Arquivo salvo em:\n{arquivo}")
+
+    atualizar_lista(registros_ordenados)
 
     tk.Button(
         frame_busca,
         text="Procurar",
-        bg="#1976d2",
-        fg="white",
+        background="#1976d2",
+        foreground="white",
         command=procurar
     ).pack(side="left", padx=5)
 
-    # ==============================
-    # EXCLUIR
-    # ==============================
+    tk.Button(
+        frame_busca,
+        text="Exportar Excel/Sheets",
+        background="#4caf50",
+        foreground="white",
+        command=exportar_atrasos
+    ).pack(side="left", padx=5)
+
     def excluir():
         if not lista.curselection():
             messagebox.showerror("Erro", "Selecione um registro.")
             return
 
         indice_lista = lista.curselection()[0]
-        linha = lista.get(indice_lista)
-        indice_real = int(linha.split(" | ")[0])
+        indice_real = lista_indices[indice_lista]
 
         if messagebox.askyesno("Confirmar", "Deseja excluir este registro?"):
             atrasos.pop(indice_real)
@@ -341,23 +413,23 @@ def ver_registros():
             janela.destroy()
             ver_registros()
 
-    # ==============================
-    # EDITAR
-    # ==============================
     def editar():
         if not lista.curselection():
             messagebox.showerror("Erro", "Selecione um registro.")
             return
 
         indice_lista = lista.curselection()[0]
-        linha = lista.get(indice_lista)
-        indice_real = int(linha.split(" | ")[0])
+        indice_real = lista_indices[indice_lista]
 
         registro = atrasos[indice_real]
 
         janela_editar = tk.Toplevel(janela)
         janela_editar.title("Editar Registro")
         janela_editar.geometry("500x650")
+        janela_editar.resizable(True, True)
+        janela_editar.minsize(400, 550)
+
+        apply_theme_to_window(janela_editar)
 
         def criar_label(txt):
             tk.Label(janela_editar, text=txt,
@@ -411,27 +483,24 @@ def ver_registros():
         tk.Button(
             janela_editar,
             text="Salvar Alterações",
-            bg="#2e7d32",
-            fg="white",
+            background="#2e7d32",
+            foreground="white",
             command=salvar_edicao
         ).pack(pady=20)
 
-    # ==============================
-    # BOTÕES
-    # ==============================
     frame_botoes = tk.Frame(janela)
     frame_botoes.pack(pady=15)
 
     tk.Button(frame_botoes, text="Editar Registro",
-              bg="#1976d2", fg="white",
+              background="#1976d2", foreground="white",
               width=20, command=editar).pack(side="left", padx=10)
 
     tk.Button(frame_botoes, text="Excluir Registro",
-              bg="#c62828", fg="white",
+              background="#c62828", foreground="white",
               width=20, command=excluir).pack(side="left", padx=10)
 
     tk.Button(frame_botoes, text="Cancelar",
-              bg="gray", fg="white",
+              background="gray", foreground="white",
               width=20, command=janela.destroy).pack(side="left", padx=10)
 
 # ==========================
@@ -443,6 +512,10 @@ def atualizar_aluno():
     janela = tk.Toplevel(root)
     janela.title("Atualizar Aluno")
     janela.geometry("500x550")
+    janela.resizable(True, True)
+    janela.minsize(400, 450)
+
+    apply_theme_to_window(janela)
 
     tk.Label(janela, text="Selecione o aluno:", font=("Segoe UI", 11, "bold")).pack()
 
@@ -492,8 +565,74 @@ def atualizar_aluno():
         messagebox.showinfo("Sucesso", "Aluno atualizado!")
         janela.destroy()
 
-    tk.Button(janela, text="Salvar", bg="#2e7d32", fg="white", command=salvar).pack(pady=5)
-    tk.Button(janela, text="Cancelar", bg="gray", fg="white", command=janela.destroy).pack()
+    tk.Button(janela, text="Salvar", background="#2e7d32", foreground="white", command=salvar).pack(pady=5)
+    tk.Button(janela, text="Cancelar", background="gray", foreground="white", command=janela.destroy).pack()
+
+# ==========================
+# THEME MANAGEMENT
+# ==========================
+current_theme = "light"
+
+def apply_theme_to_widget(widget):
+    if isinstance(widget, tk.Label):
+        if current_theme == "light":
+            widget.configure(background="#f5f5f5", foreground="#333")
+        else:
+            widget.configure(background="#333", foreground="#f5f5f5")
+    elif isinstance(widget, tk.Entry):
+        if current_theme == "light":
+            try:
+                widget.configure(background="white", foreground="#333", insertbackground="black")
+            except tk.TclError:
+                widget.configure(background="white", foreground="#333")
+        else:
+            try:
+                widget.configure(background="#555", foreground="#f5f5f5", insertbackground="#f5f5f5")
+            except tk.TclError:
+                widget.configure(background="#555", foreground="#f5f5f5")
+    elif isinstance(widget, tk.Button):
+        # Keep button colors, but ensure bg/fg are set if needed
+        pass
+    elif isinstance(widget, tk.Listbox):
+        if current_theme == "light":
+            widget.configure(background="white", foreground="#333")
+        else:
+            widget.configure(background="#555", foreground="#f5f5f5")
+    elif isinstance(widget, ttk.Combobox):
+        # For ttk, we can set styles, but for simplicity, leave as is or add custom style
+        pass
+    elif isinstance(widget, tk.Frame):
+        if current_theme == "light":
+            widget.configure(background="#f5f5f5")
+        else:
+            widget.configure(background="#333")
+    # Recurse for children
+    for child in widget.winfo_children():
+        apply_theme_to_widget(child)
+
+def apply_theme():
+    if current_theme == "light":
+        root.configure(bg="#f5f5f5")
+        canvas.configure(bg="#f5f5f5")
+    else:
+        root.configure(bg="#333")
+        canvas.configure(bg="#333")
+
+    apply_theme_to_widget(root)
+
+    if current_theme == "light":
+        toggle_button.configure(text="🌙 Dark Mode")
+    else:
+        toggle_button.configure(text="☀ Light Mode")
+
+
+def apply_theme_to_window(window):
+    apply_theme_to_widget(window)
+
+def toggle_theme():
+    global current_theme
+    current_theme = "dark" if current_theme == "light" else "light"
+    apply_theme()
 
 # ==========================
 # INTERFACE
@@ -501,64 +640,135 @@ def atualizar_aluno():
 root = tk.Tk()
 root.title("Sistema de Atrasos 2026")
 root.geometry("820x950")
+root.resizable(True, True)
+root.minsize(600, 700)
 
 frame = tk.Frame(root, padx=40, pady=40)
 frame.pack(fill="both", expand=True)
 
-tk.Label(frame, text="Registro de Atraso", font=("Segoe UI", 22, "bold")).pack(pady=20)
+# Create canvas and scrollbars for responsive design
+canvas = tk.Canvas(frame)
+scrollbar_y = tk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+scrollbar_x = tk.Scrollbar(frame, orient="horizontal", command=canvas.xview)
+scrollable_frame = tk.Frame(canvas)
 
-def criar_label(txt):
-    tk.Label(frame, text=txt, font=("Segoe UI", 12)).pack(anchor="w", pady=(10, 0))
+scrollable_frame.bind(
+    "<Configure>",
+    lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+)
 
-def criar_entry():
-    e = tk.Entry(frame, font=("Segoe UI", 12))
-    e.pack(fill="x", ipady=6)
-    return e
+canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="n")
+canvas.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
 
-criar_label("Matrícula")
-entry_matricula = criar_entry()
+def update_scrollable_position(event=None):
+    canvas_width = canvas.winfo_width()
+    canvas.itemconfig(canvas_window, width=canvas_width)
+
+canvas.bind("<Configure>", update_scrollable_position)
+
+# Add mouse wheel scrolling
+def _on_mousewheel(event):
+    canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+def _bind_to_mousewheel(event):
+    canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+def _unbind_from_mousewheel(event):
+    canvas.unbind_all("<MouseWheel>")
+
+canvas.bind('<Enter>', _bind_to_mousewheel)
+canvas.bind('<Leave>', _unbind_from_mousewheel)
+
+canvas.pack(side="left", fill="both", expand=True)
+scrollbar_y.pack(side="right", fill="y")
+scrollbar_x.pack(side="bottom", fill="x")
+
+# Dark mode toggle button at the top
+toggle_button = tk.Button(scrollable_frame, text="🌙 Dark Mode", command=toggle_theme, font=("Segoe UI", 10))
+toggle_button.pack(pady=10)
+
+# Title
+title_label = tk.Label(scrollable_frame, text="Registro de Atraso", font=("Segoe UI", 24, "bold"))
+title_label.pack(pady=20)
+
+# Container to center the form vertically
+container = tk.Frame(scrollable_frame)
+container.pack(expand=True)
+
+
+# Form frame for centering
+form_frame = tk.Frame(container)
+form_frame.pack(anchor="center")
+
+# Grid layout for fields (2 columns: label and entry)
+def create_field(label_text, row, entry_widget=None):
+    label = tk.Label(form_frame, text=label_text, font=("Segoe UI", 12))
+    label.grid(row=row, column=0, sticky="e", padx=10, pady=5)
+    if entry_widget:
+        entry_widget.grid(row=row, column=1, sticky="ew", padx=10, pady=5)
+    return label
+
+# Matrícula
+entry_matricula = tk.Entry(form_frame, font=("Segoe UI", 12))
+create_field("Matrícula:", 0, entry_matricula)
 entry_matricula.bind("<KeyRelease>", sugerir_aluno)
 
-criar_label("Nome")
-entry_nome = criar_entry()
+# Nome
+entry_nome = tk.Entry(form_frame, font=("Segoe UI", 12))
+create_field("Nome:", 1, entry_nome)
 entry_nome.bind("<KeyRelease>", sugerir_aluno)
 
-lista_sugestoes = tk.Listbox(frame, height=4)
-lista_sugestoes.pack(fill="x")
+# Sugestões
+lista_sugestoes = tk.Listbox(form_frame, height=4)
+lista_sugestoes.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
 lista_sugestoes.bind("<<ListboxSelect>>", selecionar_sugestao)
 
-criar_label("Docente")
-entry_docente = criar_entry()
+# Docente
+entry_docente = tk.Entry(form_frame, font=("Segoe UI", 12))
+create_field("Docente:", 3, entry_docente)
 
-criar_label("Turma")
-entry_turma = criar_entry()
+# Turma
+entry_turma = tk.Entry(form_frame, font=("Segoe UI", 12))
+create_field("Turma:", 4, entry_turma)
 
-criar_label("Início")
-entry_inicio = criar_entry()
+# Início
+entry_inicio = tk.Entry(form_frame, font=("Segoe UI", 12))
+create_field("Início:", 5, entry_inicio)
 entry_inicio.bind("<KeyRelease>", formatar_horario)
 
-criar_label("Chegada")
-entry_chegada = criar_entry()
+# Chegada
+entry_chegada = tk.Entry(form_frame, font=("Segoe UI", 12))
+create_field("Chegada:", 6, entry_chegada)
 entry_chegada.bind("<KeyRelease>", formatar_horario)
 
-criar_label("Motivo")
-combo_motivo = ttk.Combobox(frame, values=[
+# Motivo
+combo_motivo = ttk.Combobox(form_frame, values=[
     "Transporte privado", "Transporte publico",
     "Casa", "Trabalho", "Medico",
     "Estava no IF", "Acordou tarde", "Transito"
-])
-combo_motivo.pack(fill="x", ipady=5)
+], font=("Segoe UI", 12))
+create_field("Motivo:", 7, combo_motivo)
 
-tk.Button(frame, text="Registrar Atraso",
-          bg="#2e7d32", fg="white",
-          command=registrar_atraso).pack(pady=20, fill="x")
+# Buttons
+button_frame = tk.Frame(container)
+button_frame.pack(anchor="center", pady=20)
 
-tk.Button(frame, text="Ver Registros",
-          bg="#1976d2", fg="white",
+tk.Button(button_frame, text="Registrar Atraso",
+          background="#2e7d32", foreground="white", font=("Segoe UI", 12),
+          command=registrar_atraso).pack(fill="x", pady=5)
+
+tk.Button(button_frame, text="Ver Registros",
+          background="#1976d2", foreground="white", font=("Segoe UI", 12),
           command=ver_registros).pack(fill="x", pady=5)
 
-tk.Button(frame, text="Atualizar Dados do Aluno",
-          bg="#ff9800", fg="white",
+tk.Button(button_frame, text="Atualizar Dados do Aluno",
+          background="#ff9800", foreground="white", font=("Segoe UI", 12),
           command=atualizar_aluno).pack(fill="x", pady=5)
+
+# Configure grid weights for centering
+form_frame.columnconfigure(1, weight=1)
+
+# Apply initial theme
+apply_theme()
 
 root.mainloop()
